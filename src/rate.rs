@@ -13,6 +13,7 @@ pub use fixed_point::FixedPoint as _;
 use num::{CheckedDiv, CheckedMul};
 #[doc(inline)]
 pub use units::*;
+use core::ops::Mul;
 
 /// An unsigned, fixed-point rate type
 ///
@@ -372,6 +373,17 @@ impl<T: TimeInt> Generic<T> {
 }
 
 impl<T: TimeInt> Rate for Generic<T> {}
+
+impl<T: TimeInt> Mul<T> for Generic<T> {
+    type Output = Generic<T>;
+
+    fn mul(self, rhs: T) -> Self::Output {
+        Self {
+            integer: self.integer * rhs,
+            scaling_factor: self.scaling_factor,
+        }
+    }
+}
 
 /// Rate-type units
 #[doc(hidden)]
