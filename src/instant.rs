@@ -1,8 +1,9 @@
 //! An instant of time
 
 use crate::{
-    duration::{self, Duration},
+    duration::{self, Duration, Generic},
     fixed_point::FixedPoint,
+    time_int::TimeInt,
 };
 use core::{
     cmp::Ordering,
@@ -187,6 +188,50 @@ impl<Clock: crate::Clock> Instant<Clock> {
         }
     }
 
+    /// `Generic` version of `checked_add`.
+    ///
+    /// This `Instant` + [`Duration`] = later (future) `Instant`
+    ///
+    /// Returns [`None`] if the [`Duration`] is too large
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use embedded_time::{fraction::Fraction, duration::*, Instant, ConversionError};
+    /// # #[derive(Debug)]
+    /// struct Clock;
+    /// impl embedded_time::Clock for Clock {
+    ///     type T = u32;
+    ///     const SCALING_FACTOR: Fraction = Fraction::new(1, 1_000);
+    ///     // ...
+    /// # fn try_now(&self) -> Result<Instant<Self>, embedded_time::clock::Error> {unimplemented!()}
+    /// }
+    ///
+    /// assert_eq!(
+    ///     Instant::<Clock>::new(0).checked_add_generic(Generic::new(1, Fraction::new(1, 1))),
+    ///     Some(Instant::<Clock>::new(1_000))
+    /// );
+    ///
+    /// assert_eq!(
+    ///     Instant::<Clock>::new(0).checked_add_generic(Generic::new(u32::MAX/2 + 1, Fraction::new(1, 1))),
+    ///     None
+    /// );
+    /// ```
+    pub fn checked_add_generic<T: TimeInt>(self, duration: Generic<T>) -> Option<Self>
+    where
+        Clock::T: TryFrom<T> + core::ops::Div<Output = Clock::T>,
+        Generic<Clock::T>: TryFrom<Generic<T>>,
+    {
+        let add_ticks: Clock::T = duration.into_ticks(Clock::SCALING_FACTOR).ok()?;
+        if add_ticks <= (<Clock::T as num::Bounded>::max_value() / 2.into()) {
+            Some(Self {
+                ticks: self.ticks.wrapping_add(&add_ticks),
+            })
+        } else {
+            None
+        }
+    }
+
     /// This `Instant` - [`Duration`] = earlier `Instant`
     ///
     /// Returns [`None`] if the [`Duration`] is too large
@@ -214,6 +259,46 @@ impl<Clock: crate::Clock> Instant<Clock> {
     where
         Dur: FixedPoint,
         Clock::T: TryFrom<Dur::T> + core::ops::Div<Output = Clock::T>,
+    {
+        let sub_ticks: Clock::T = duration.into_ticks(Clock::SCALING_FACTOR).ok()?;
+        if sub_ticks <= (<Clock::T as num::Bounded>::max_value() / 2.into()) {
+            Some(Self {
+                ticks: self.ticks.wrapping_sub(&sub_ticks),
+            })
+        } else {
+            None
+        }
+    }
+
+    /// `Generic` version of `checked_sub`.
+    ///
+    /// This `Instant` - [`Duration`] = earlier `Instant`
+    ///
+    /// Returns [`None`] if the [`Duration`] is too large
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use embedded_time::{fraction::Fraction, duration::*, Instant, ConversionError};
+    /// # #[derive(Debug)]
+    /// struct Clock;
+    /// impl embedded_time::Clock for Clock {
+    ///     type T = u32;
+    ///     const SCALING_FACTOR: Fraction = Fraction::new(1, 1_000);
+    ///     // ...
+    /// # fn try_now(&self) -> Result<Instant<Self>, embedded_time::clock::Error> {unimplemented!()}
+    /// }
+    ///
+    /// assert_eq!(Instant::<Clock>::new(1_000).checked_sub_generic(Generic::new(1, Fraction::new(1, 1))),
+    ///     Some(Instant::<Clock>::new(0)));
+    ///
+    /// assert_eq!(Instant::<Clock>::new(u32::MAX).checked_sub_generic(Generic::new(u32::MAX/2 + 1, Fraction::new(1, 1))),
+    ///     None);
+    /// ```
+    pub fn checked_sub_generic<T: TimeInt>(self, duration: Generic<T>) -> Option<Self>
+    where
+        Clock::T: TryFrom<T> + core::ops::Div<Output = Clock::T>,
+        Generic<Clock::T>: TryFrom<Generic<T>>,
     {
         let sub_ticks: Clock::T = duration.into_ticks(Clock::SCALING_FACTOR).ok()?;
         if sub_ticks <= (<Clock::T as num::Bounded>::max_value() / 2.into()) {
@@ -340,6 +425,22 @@ where
     }
 }
 
+impl<Clock: crate::Clock, T: TimeInt> ops::Add<Generic<T>> for Instant<Clock>
+where
+    Generic<Clock::T>: TryFrom<Generic<T>>,
+    Clock::T: TryFrom<T>,
+{
+    type Output = Self;
+
+    fn add(self, rhs: Generic<T>) -> Self::Output {
+        if let Some(v) = self.checked_add_generic(rhs) {
+            v
+        } else {
+            panic!("Add failed")
+        }
+    }
+}
+
 impl<Clock: crate::Clock, Dur: Duration> ops::Sub<Dur> for Instant<Clock>
 where
     Clock::T: TryFrom<Dur::T>,
@@ -395,6 +496,22 @@ where
     /// ```
     fn sub(self, rhs: Dur) -> Self::Output {
         if let Some(v) = self.checked_sub(rhs) {
+            v
+        } else {
+            panic!("Sub failed")
+        }
+    }
+}
+
+impl<Clock: crate::Clock, T: TimeInt> ops::Sub<Generic<T>> for Instant<Clock>
+where
+    Generic<Clock::T>: TryFrom<Generic<T>>,
+    Clock::T: TryFrom<T>,
+{
+    type Output = Self;
+
+    fn sub(self, rhs: Generic<T>) -> Self::Output {
+        if let Some(v) = self.checked_sub_generic(rhs) {
             v
         } else {
             panic!("Sub failed")

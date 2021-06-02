@@ -11,6 +11,7 @@ use core::{
     convert::TryFrom,
     hash::{Hash, Hasher},
     mem::size_of,
+    ops,
     prelude::v1::*,
 };
 #[doc(hidden)]
@@ -501,7 +502,110 @@ impl<T: TimeInt> Generic<T> {
     }
 }
 
+impl<T: TimeInt> Generic<T> {
+    pub(crate) fn into_ticks<T2>(self, fraction: Fraction) -> Result<T2, ConversionError>
+    where
+        T2: TimeInt,
+        T2: TryFrom<T>,
+    {
+        if size_of::<T2>() > size_of::<T>() {
+            let ticks =
+                T2::try_from(*self.integer()).map_err(|_| ConversionError::ConversionFailure)?;
+
+            if fraction > Fraction::new(1, 1) {
+                TimeInt::checked_div_fraction(
+                    &TimeInt::checked_mul_fraction(&ticks, &self.scaling_factor)
+                        .ok_or(ConversionError::Unspecified)?,
+                    &fraction,
+                )
+                .ok_or(ConversionError::Unspecified)
+            } else {
+                TimeInt::checked_mul_fraction(
+                    &ticks,
+                    &self
+                        .scaling_factor
+                        .checked_div(&fraction)
+                        .ok_or(ConversionError::Unspecified)?,
+                )
+                .ok_or(ConversionError::Unspecified)
+            }
+        } else {
+            let ticks = if self.scaling_factor > Fraction::new(1, 1) {
+                TimeInt::checked_div_fraction(
+                    &TimeInt::checked_mul_fraction(self.integer(), &self.scaling_factor)
+                        .ok_or(ConversionError::Unspecified)?,
+                    &fraction,
+                )
+                .ok_or(ConversionError::Unspecified)?
+            } else {
+                TimeInt::checked_mul_fraction(
+                    self.integer(),
+                    &self
+                        .scaling_factor
+                        .checked_div(&fraction)
+                        .ok_or(ConversionError::Unspecified)?,
+                )
+                .ok_or(ConversionError::Unspecified)?
+            };
+
+            T2::try_from(ticks).map_err(|_| ConversionError::ConversionFailure)
+        }
+    }
+
+    /// Checked addition of two `Generic` durations.
+    pub fn checked_add_generic<T2: TimeInt>(mut self, duration: Generic<T2>) -> Option<Self>
+    where
+        T: TryFrom<T2>,
+    {
+        let add_ticks: T = duration.into_ticks(*self.scaling_factor()).ok()?;
+        self.integer = self.integer.checked_add(&add_ticks)?;
+
+        Some(self)
+    }
+
+    /// Checked subtraction of two `Generic` durations.
+    pub fn checked_sub_generic<T2: TimeInt>(mut self, duration: Generic<T2>) -> Option<Self>
+    where
+        T: TryFrom<T2>,
+    {
+        let sub_ticks: T = duration.into_ticks(*self.scaling_factor()).ok()?;
+        self.integer = self.integer.checked_sub(&sub_ticks)?;
+
+        Some(self)
+    }
+}
+
 impl<T: TimeInt> Duration for Generic<T> {}
+
+impl<T: TimeInt, T2: TimeInt> ops::Add<Generic<T2>> for Generic<T>
+where
+    T: TryFrom<T2>,
+{
+    type Output = Self;
+
+    fn add(self, rhs: Generic<T2>) -> Self::Output {
+        if let Some(v) = self.checked_add_generic(rhs) {
+            v
+        } else {
+            panic!("Add failed")
+        }
+    }
+}
+
+impl<T: TimeInt, T2: TimeInt> ops::Sub<Generic<T2>> for Generic<T>
+where
+    T: TryFrom<T2>,
+{
+    type Output = Self;
+
+    fn sub(self, rhs: Generic<T2>) -> Self::Output {
+        if let Some(v) = self.checked_sub_generic(rhs) {
+            v
+        } else {
+            panic!("Sub failed")
+        }
+    }
+}
 
 /// Duration units
 #[doc(hidden)]
